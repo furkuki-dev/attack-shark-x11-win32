@@ -36,9 +36,14 @@ jobs:
             -   name: Typecheck
                 run: bun run typecheck
 
+            # electron-builder cannot rebuild natives under Bun (it calls `bun rebuild`),
+            # so node-hid is rebuilt here against the Electron 22 ia32 headers.
+            -   name: Rebuild native modules for ia32 Electron
+                run: bun run rebuild:native
+
             # The target arch is set in package.json (win.target[].arch = "ia32").
             # electron-builder downloads the win32-ia32 Electron runtime and
-            # rebuilds native modules (usb, node-hid) for ia32 automatically.
+            # packages the already-rebuilt native modules.
             -   name: Build ia32 installer and portable exe
                 run: bun run package -- --publish never
 
