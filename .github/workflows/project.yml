@@ -69,12 +69,20 @@ jobs:
                     if-no-files-found: error
                     retention-days: 14
 
-            -   name: Create GitHub Release (tags only)
-                if: startsWith(github.ref, 'refs/tags/v')
+            # Runs only after all previous steps succeeded.
+            # Tag builds (v*) publish a normal release marked as "latest".
+            # Manual or branch builds publish a prerelease named after the run,
+            # so they never replace the stable release used by auto-update.
+            -   name: Publish GitHub Release
                 uses: softprops/action-gh-release@v2
                 with:
+                    tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('ia32-build-{0}', github.run_number) }}
+                    name: ${{ github.ref_type == 'tag' && github.ref_name || format('ia32 build #{0}', github.run_number) }}
+                    body: Automatic ia32 build from commit ${{ github.sha }}.
                     files: |
                         dist/*.exe
                         dist/*.blockmap
                         dist/latest.yml
+                    prerelease: ${{ github.ref_type != 'tag' }}
+                    make_latest: ${{ github.ref_type == 'tag' }}
                     fail_on_unmatched_files: true
