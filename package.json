@@ -45,6 +45,7 @@
 		"dev": "npm run copy-driver-inf && electron-vite dev",
 		"build": "npm run copy-driver-inf && electron-vite build",
 		"preview": "electron-vite preview",
+		"rebuild:native": "electron-rebuild -v 22.3.27 -a ia32 -f -w node-hid",
 		"package": "npm run copy-driver-inf && electron-vite build && electron-builder",
 		"copy-driver-inf": "node scripts/copy-driver-inf.cjs",
 		"lint": "bunx eslint . --ext .ts --cache --cache-strategy content",
@@ -126,7 +127,8 @@
 		},
 		"portable": {
 			"artifactName": "attack-shark-x11-electron-${version}-ia32-portable.${ext}"
-		}
+		},
+		"npmRebuild": false
 	},
 	"lint-staged": {
 		"*.{ts,js,json}": [
@@ -144,6 +146,7 @@
 		"vue-i18n": "^11.4.5"
 	},
 	"devDependencies": {
+		"@electron/rebuild": "^3.7.1",
 		"@eslint/js": "^10.0.1",
 		"@types/bun": "^1.3.14",
 		"@types/node": "^20.19.0",
