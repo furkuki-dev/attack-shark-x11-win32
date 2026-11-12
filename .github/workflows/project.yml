@@ -11,7 +11,7 @@ permissions:
 
 jobs:
     build-win-ia32:
-        runs-on: windows-latest
+        runs-on: windows-2022
 
         steps:
             -   name: Checkout repository
