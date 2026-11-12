@@ -5,6 +5,7 @@ import { TimeoutError } from '../errors.js';
 export interface BatteryMonitorEvents {
 	batteryChange: [battery: number];
 	error: [error: Error];
+	_internalBatteryData: [data: Buffer];
 }
 
 export interface BatteryMonitorConfig {
