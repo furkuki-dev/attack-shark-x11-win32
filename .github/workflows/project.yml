@@ -77,7 +77,7 @@ jobs:
                 uses: softprops/action-gh-release@v2
                 with:
                     tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('ia32-build-{0}', github.run_number) }}
-                    name: ${{ github.ref_type == 'tag' && github.ref_name || format('ia32 build #{0}', github.run_number) }}
+                    name: ${{ github.ref_type == 'tag' && github.ref_name || format('ia32 build {0}', github.run_number) }}
                     body: Automatic ia32 build from commit ${{ github.sha }}.
                     files: |
                         dist/*.exe
