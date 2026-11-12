@@ -9,7 +9,7 @@
         "electron-updater": "^6.8.9",
         "lucide-vue-next": "^1.0.0",
         "node-hid": "^3.3.0",
-        "usb": "github:dressedinblack5/node-usb-rs",
+        "usb": "^3.2.1",
         "vue": "^3.5.38",
         "vue-i18n": "^11.4.5",
       },
@@ -995,7 +995,6 @@
 
     "uri-js": ["uri-js@4.4.1", "", { "dependencies": { "punycode": "^2.1.0" } }, ""],
 
-    "usb": ["usb@github:dressedinblack5/node-usb-rs#1b58772", { "dependencies": { "@types/w3c-web-usb": "^1.0.14" } }, "dressedinblack5-node-usb-rs-1b58772", "sha512-6ZVU0dEjjSRNhcXdV0DYfdTFX1FfQJgs9buXyrTbRLNlnp0FiEGEIB0rTe3gtsS0rKzP+wracxdbp0jR0cHBpA=="],
 
     "utf8-byte-length": ["utf8-byte-length@1.0.5", "", {}, ""],
 
