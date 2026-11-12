@@ -91,15 +91,13 @@
 			}
 		],
 		"nodeGypRebuild": false,
-		"nativeRebuilder": "legacy",
 		"linux": {
 			"target": [
 				"AppImage",
 				"deb"
 			],
 			"category": "Settings",
-			"icon": "assets/cs-mouse.svg",
-			"syncDesktopName": true
+			"icon": "assets/cs-mouse.svg"
 		},
 		"win": {
 			"target": [
