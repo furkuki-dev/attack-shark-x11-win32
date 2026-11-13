@@ -84,6 +84,7 @@ Desktop.ini
 .turbo/
 
 # Project specific
+native-usb/target/
 /tmp
 /reverse-eng
 /_usb_build/
