@@ -130,7 +130,10 @@
 		"portable": {
 			"artifactName": "attack-shark-x11-electron-${version}-ia32-portable.${ext}"
 		},
-		"npmRebuild": false
+		"npmRebuild": false,
+		"asarUnpack": [
+			"**/*.node"
+		]
 	},
 	"lint-staged": {
 		"*.{ts,js,json}": [
