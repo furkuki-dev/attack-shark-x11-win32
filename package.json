@@ -74,6 +74,8 @@
 		"files": [
 			"out/**/*",
 			"package.json",
+			"node_modules/**/*win32-ia32*",
+			"node_modules/**/*win32-ia32*/**/*",
 			"drivers/**/*",
 			"!node_modules/usb/target/**/*",
 			"!node_modules/node-hid/build/Release/**/*.iobj",
