@@ -33,6 +33,31 @@ jobs:
             -   name: Install dependencies
                 run: bun install
 
+            # bun installs only the optional native packages for the host (win32-x64).
+            # usb v3 loads its binding from a per-platform package, so the win32-ia32
+            # binding must be fetched explicitly and copied into node_modules.
+            -   name: Fetch win32-ia32 binding for usb
+                shell: pwsh
+                run: |
+                    New-Item -ItemType Directory -Force -Path ia32-native | Out-Null
+                    Set-Location ia32-native
+                    npm init -y | Out-Null
+                    npm install --no-save --cpu=ia32 --os=win32 usb@3.2.1
+                    Set-Location ..
+                    $src = (Resolve-Path 'ia32-native/node_modules').Path
+                    Get-ChildItem $src -Recurse -Directory -Depth 1 |
+                        Where-Object { $_.Name -like '*win32-ia32*' } |
+                        ForEach-Object {
+                            $rel = $_.FullName.Substring($src.Length + 1)
+                            $dest = Join-Path 'node_modules' $rel
+                            New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+                            Copy-Item -Recurse -Force $_.FullName $dest
+                            Write-Host "Copied $rel"
+                        }
+                    $found = Get-ChildItem 'node_modules' -Recurse -Directory -Depth 1 |
+                        Where-Object { $_.Name -like '*win32-ia32*' }
+                    if (-not $found) { throw 'No win32-ia32 usb binding was copied into node_modules' }
+
             -   name: Typecheck
                 run: bun run typecheck
 
