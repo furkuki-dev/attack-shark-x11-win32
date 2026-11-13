@@ -48,8 +48,8 @@
 		"rebuild:native": "electron-rebuild -v 22.3.27 -a ia32 -f -w node-hid",
 		"package": "npm run copy-driver-inf && electron-vite build && electron-builder",
 		"copy-driver-inf": "node scripts/copy-driver-inf.cjs",
-		"lint": "bunx eslint . --ext .ts --cache --cache-strategy content",
-		"lint:fix": "bunx eslint . --ext .ts --fix --cache --cache-strategy content",
+		"lint": "bunx eslint . --cache --cache-strategy content",
+		"lint:fix": "bunx eslint . --fix --cache --cache-strategy content",
 		"format": "bunx prettier --check . --cache --cache-strategy content",
 		"format:fix": "bunx prettier --write . --cache --cache-strategy content",
 		"typecheck": "tsc --noEmit",
@@ -67,8 +67,8 @@
 		"publish": [
 			{
 				"provider": "github",
-				"owner": "akawazak",
-				"repo": "attack-shark-x11-community-driver"
+				"owner": "furkuki-dev",
+				"repo": "attack-shark-x11-win32"
 			}
 		],
 		"files": [
