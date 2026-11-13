@@ -33,30 +33,34 @@ jobs:
             -   name: Install dependencies
                 run: bun install
 
-            # bun installs only the optional native packages for the host (win32-x64).
-            # usb v3 loads its binding from a per-platform package, so the win32-ia32
-            # binding must be fetched explicitly and copied into node_modules.
-            -   name: Fetch win32-ia32 binding for usb
+            -   name: Setup Rust (Windows 7 ia32 target)
+                uses: dtolnay/rust-toolchain@stable
+                with:
+                    targets: i686-win7-windows-msvc
+
+            -   name: Cache Rust build
+                uses: Swatinem/rust-cache@v2
+                with:
+                    workspaces: native-usb
+
+            # The official usb v3 binding is built for i686-pc-windows-msvc, which needs
+            # Windows 10. Build it for the Windows 7 target and put it where the usb
+            # loader looks first (node_modules/usb/usb.win32-ia32-msvc.node).
+            -   name: Build usb native binding for Windows 7 (ia32)
                 shell: pwsh
+                working-directory: native-usb
                 run: |
-                    New-Item -ItemType Directory -Force -Path ia32-native | Out-Null
-                    Set-Location ia32-native
-                    npm init -y | Out-Null
-                    npm install --no-save --cpu=ia32 --os=win32 usb@3.2.1
-                    Set-Location ..
-                    $src = (Resolve-Path 'ia32-native/node_modules').Path
-                    Get-ChildItem $src -Recurse -Directory -Depth 1 |
-                        Where-Object { $_.Name -like '*win32-ia32*' } |
-                        ForEach-Object {
-                            $rel = $_.FullName.Substring($src.Length + 1)
-                            $dest = Join-Path 'node_modules' $rel
-                            New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
-                            Copy-Item -Recurse -Force $_.FullName $dest
-                            Write-Host "Copied $rel"
-                        }
-                    $found = Get-ChildItem 'node_modules' -Recurse -Directory -Depth 1 |
-                        Where-Object { $_.Name -like '*win32-ia32*' }
-                    if (-not $found) { throw 'No win32-ia32 usb binding was copied into node_modules' }
+                    cargo build --release --target i686-win7-windows-msvc --lib
+                    if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
+                    $dll = 'target/i686-win7-windows-msvc/release/usb.dll'
+                    if (-not (Test-Path $dll)) { throw "Missing $dll" }
+                    if (-not (Test-Path '../node_modules/usb')) { throw 'node_modules/usb is missing' }
+                    Copy-Item $dll '../node_modules/usb/usb.win32-ia32-msvc.node' -Force
+                    $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path '../node_modules/usb/usb.win32-ia32-msvc.node'))
+                    $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+                    $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+                    Write-Host ('usb binding PE machine: 0x{0:X4}' -f $machine)
+                    if ($machine -ne 0x014C) { throw 'usb binding is not 32-bit x86' }
 
             -   name: Typecheck
                 run: bun run typecheck
@@ -68,7 +72,7 @@ jobs:
 
             # The target arch is set in package.json (win.target[].arch = "ia32").
             # electron-builder downloads the win32-ia32 Electron runtime and
-            # packages the already-rebuilt native modules.
+            # rebuilds native modules (usb, node-hid) for ia32 automatically.
             -   name: Build ia32 installer and portable exe
                 run: bun run package -- --publish never
 
