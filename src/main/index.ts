@@ -13,6 +13,7 @@ import type { UserPreferencesBuilderOptions } from './driver/protocols/UserPrefe
 import type { MacroBuilderOptions } from './driver/protocols/MacrosBuilder.js';
 import type { MacroMode } from '../shared/macro-types.js';
 import { installUsbDriver } from './utils/driverInstaller.js';
+import { logError } from './utils/errorLog.js';
 import { WriteQueue } from './driver/utils/writeQueue.js';
 
 type ConnectedDriver = AttackSharkX11 | AttackSharkR1;
@@ -71,8 +72,9 @@ async function connectDevice(
 	} catch (error: unknown) {
 		setDriver(null);
 		const err = error instanceof Error ? error : new Error(String(error));
+		const logPath = logError('connect-device', error);
 		console.error('Connection failed:', err);
-		return { success: false, error: err.message };
+		return { success: false, error: `${err.message} (log: ${logPath})` };
 	}
 }
 
@@ -389,7 +391,8 @@ app.whenReady().then(() => {
 				}
 			}
 			return { detected: false };
-		} catch {
+		} catch (error: unknown) {
+			logError('detect-device', error);
 			return { detected: false };
 		}
 	});
