@@ -1,0 +1,1248 @@
+use napi::bindgen_prelude::*;
+use napi_derive::napi;
+use nusb::{
+    descriptors::language_id::US_ENGLISH, descriptors::TransferType, transfer::Buffer,
+    transfer::Bulk, transfer::Interrupt, MaybeFuture,
+};
+use std::{
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+    sync::{mpsc, Arc, Mutex, MutexGuard},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
+use tokio::sync::oneshot;
+
+const ENDPOINT_NUMBER_MASK: u8 = 0x7f;
+const DESC_TIMEOUT: Duration = Duration::from_millis(100);
+
+fn decode_version(version: u16) -> (u8, u8, u8) {
+    let major: u8 = (version >> 8) as u8;
+    let minor: u8 = ((version >> 4) & 0x0F) as u8;
+    let sub: u8 = (version & 0x0F) as u8;
+    (major, minor, sub)
+}
+
+fn get_string(device: &nusb::Device, index: Option<std::num::NonZeroU8>) -> Result<Option<String>> {
+    match index {
+        Some(desc_index) => device
+            .get_string_descriptor(desc_index, US_ENGLISH, DESC_TIMEOUT)
+            .wait()
+            .map(Some)
+            .map_err(|e| napi::Error::from_reason(format!("getString error: {e}"))),
+        None => Ok(None),
+    }
+}
+
+fn control_type_from_request_type(request_type: &str) -> nusb::transfer::ControlType {
+    match request_type {
+        "standard" => nusb::transfer::ControlType::Standard,
+        "class" => nusb::transfer::ControlType::Class,
+        "vendor" => nusb::transfer::ControlType::Vendor,
+        _ => nusb::transfer::ControlType::Standard,
+    }
+}
+
+fn recipient_from_request_recipient(recipient: &str) -> nusb::transfer::Recipient {
+    match recipient {
+        "device" => nusb::transfer::Recipient::Device,
+        "interface" => nusb::transfer::Recipient::Interface,
+        "endpoint" => nusb::transfer::Recipient::Endpoint,
+        "other" => nusb::transfer::Recipient::Other,
+        _ => nusb::transfer::Recipient::Other,
+    }
+}
+
+fn control_in_setup(
+    setup: &UsbControlTransferParameters,
+    control_type: nusb::transfer::ControlType,
+    recipient: nusb::transfer::Recipient,
+    index: u16,
+    length: u16,
+) -> nusb::transfer::ControlIn {
+    nusb::transfer::ControlIn {
+        control_type,
+        recipient,
+        request: setup.request,
+        value: setup.value,
+        index,
+        length,
+    }
+}
+
+fn control_out_setup<'a>(
+    setup: &UsbControlTransferParameters,
+    control_type: nusb::transfer::ControlType,
+    recipient: nusb::transfer::Recipient,
+    index: u16,
+    data: &'a [u8],
+) -> nusb::transfer::ControlOut<'a> {
+    nusb::transfer::ControlOut {
+        control_type,
+        recipient,
+        request: setup.request,
+        value: setup.value,
+        index,
+        data,
+    }
+}
+
+pub(crate) async fn run_blocking<T, F>(f: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> std::result::Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("blocking task error: {e}")))?
+        .map_err(napi::Error::from_reason)
+}
+
+/// Enum wrapping either a Bulk or Interrupt endpoint.
+/// Both implement BulkOrInterrupt and share identical method signatures,
+/// but are different concrete types in Rust's type system.
+enum AnyEndpoint<DIR: nusb::transfer::EndpointDirection> {
+    Bulk(nusb::Endpoint<nusb::transfer::Bulk, DIR>),
+    Interrupt(nusb::Endpoint<nusb::transfer::Interrupt, DIR>),
+}
+
+struct SharedEndpointCache<T> {
+    endpoints: Mutex<HashMap<u8, T>>,
+}
+
+impl<T> SharedEndpointCache<T> {
+    fn new() -> Self {
+        Self {
+            endpoints: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn guard(&self) -> MutexGuard<'_, HashMap<u8, T>> {
+        self.endpoints
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl<DIR: nusb::transfer::EndpointDirection + 'static> SharedEndpointCache<EndpointWorker<DIR>> {
+    fn clear(&self) {
+        let workers = {
+            let mut endpoints = self.guard();
+            endpoints
+                .drain()
+                .map(|(_, worker)| worker)
+                .collect::<Vec<_>>()
+        };
+
+        for worker in workers {
+            worker.stop();
+        }
+    }
+
+    fn get_or_try_insert_with<F>(&self, endpointNumber: u8, open: F) -> Option<EndpointWorker<DIR>>
+    where
+        F: FnOnce() -> Option<AnyEndpoint<DIR>>,
+    {
+        let mut endpoints = self.guard();
+        if let Some(endpoint) = endpoints.get(&endpointNumber) {
+            return Some(endpoint.clone());
+        }
+
+        let worker = EndpointWorker::new(open()?);
+        endpoints.insert(endpointNumber, worker.clone());
+        Some(worker)
+    }
+}
+
+impl<DIR: nusb::transfer::EndpointDirection> AnyEndpoint<DIR> {
+    fn max_packet_size(&self) -> usize {
+        match self {
+            AnyEndpoint::Bulk(ep) => ep.max_packet_size(),
+            AnyEndpoint::Interrupt(ep) => ep.max_packet_size(),
+        }
+    }
+
+    fn submit(&mut self, buf: nusb::transfer::Buffer) {
+        match self {
+            AnyEndpoint::Bulk(ep) => ep.submit(buf),
+            AnyEndpoint::Interrupt(ep) => ep.submit(buf),
+        }
+    }
+
+    fn pending(&self) -> usize {
+        match self {
+            AnyEndpoint::Bulk(ep) => ep.pending(),
+            AnyEndpoint::Interrupt(ep) => ep.pending(),
+        }
+    }
+
+    fn wait_next_complete(&mut self, timeout: Duration) -> Option<nusb::transfer::Completion> {
+        match self {
+            AnyEndpoint::Bulk(ep) => ep.wait_next_complete(timeout),
+            AnyEndpoint::Interrupt(ep) => ep.wait_next_complete(timeout),
+        }
+    }
+
+    fn cancel_all(&mut self) {
+        match self {
+            AnyEndpoint::Bulk(ep) => ep.cancel_all(),
+            AnyEndpoint::Interrupt(ep) => ep.cancel_all(),
+        }
+    }
+
+    fn clear_halt_blocking(&mut self) -> std::result::Result<(), nusb::Error> {
+        match self {
+            AnyEndpoint::Bulk(ep) => ep.clear_halt().wait(),
+            AnyEndpoint::Interrupt(ep) => ep.clear_halt().wait(),
+        }
+    }
+}
+
+type TransferResponse = oneshot::Sender<std::result::Result<nusb::transfer::Completion, String>>;
+type ClearHaltResponse = oneshot::Sender<std::result::Result<(), String>>;
+
+enum EndpointCommand {
+    Transfer {
+        buffer: Buffer,
+        timeout: Duration,
+        response: TransferResponse,
+    },
+    ClearHalt {
+        response: ClearHaltResponse,
+    },
+    Stop,
+}
+
+struct PendingTransfer {
+    deadline: Option<Instant>,
+    response: Option<TransferResponse>,
+}
+
+struct EndpointWorker<DIR: nusb::transfer::EndpointDirection> {
+    sender: mpsc::Sender<EndpointCommand>,
+    join_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    max_packet_size: usize,
+    _direction: PhantomData<DIR>,
+}
+
+impl<DIR: nusb::transfer::EndpointDirection> Clone for EndpointWorker<DIR> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            join_handle: self.join_handle.clone(),
+            max_packet_size: self.max_packet_size,
+            _direction: PhantomData,
+        }
+    }
+}
+
+impl<DIR: nusb::transfer::EndpointDirection + 'static> EndpointWorker<DIR> {
+    fn new(endpoint: AnyEndpoint<DIR>) -> Self {
+        const ENDPOINT_POLL_TIMEOUT: Duration = Duration::from_millis(10);
+
+        let max_packet_size = endpoint.max_packet_size();
+        let (sender, receiver) = mpsc::channel();
+        let join_handle = thread::spawn(move || {
+            let mut endpoint = endpoint;
+            let mut pending = VecDeque::new();
+            let mut clear_halt_responses: Vec<ClearHaltResponse> = Vec::new();
+            let mut stopping = false;
+
+            loop {
+                if pending.is_empty() && stopping {
+                    break;
+                }
+
+                if pending.is_empty() {
+                    match receiver.recv() {
+                        Ok(command) => handle_endpoint_command(
+                            command,
+                            &mut endpoint,
+                            &mut pending,
+                            &mut clear_halt_responses,
+                            &mut stopping,
+                        ),
+                        Err(_) => break,
+                    }
+                }
+
+                loop {
+                    match receiver.try_recv() {
+                        Ok(command) => handle_endpoint_command(
+                            command,
+                            &mut endpoint,
+                            &mut pending,
+                            &mut clear_halt_responses,
+                            &mut stopping,
+                        ),
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            stopping = true;
+                            break;
+                        }
+                    }
+                }
+
+                expire_timed_out_transfers(&mut pending);
+
+                if endpoint.pending() > 0 {
+                    if let Some(completion) = endpoint.wait_next_complete(next_wait(&pending)) {
+                        if let Some(mut pending_transfer) = pending.pop_front() {
+                            if let Some(response) = pending_transfer.response.take() {
+                                let _ = response.send(Ok(completion));
+                            }
+                        }
+                    }
+                } else if !clear_halt_responses.is_empty() {
+                    let result = endpoint.clear_halt_blocking().map_err(|e| format!("{e}"));
+                    for response in clear_halt_responses.drain(..) {
+                        let _ = response.send(result.clone());
+                    }
+                } else if !pending.is_empty() {
+                    thread::sleep(ENDPOINT_POLL_TIMEOUT);
+                }
+            }
+        });
+
+        Self {
+            sender,
+            join_handle: Arc::new(Mutex::new(Some(join_handle))),
+            max_packet_size,
+            _direction: PhantomData,
+        }
+    }
+
+    async fn transfer(
+        &self,
+        buffer: Buffer,
+        timeout: Duration,
+    ) -> Result<nusb::transfer::Completion> {
+        let (response, receiver) = oneshot::channel();
+        self.sender
+            .send(EndpointCommand::Transfer {
+                buffer,
+                timeout,
+                response,
+            })
+            .map_err(|_| napi::Error::from_reason("endpoint worker stopped"))?;
+
+        match receiver.await {
+            Ok(Ok(completion)) => Ok(completion),
+            Ok(Err(e)) => Err(napi::Error::from_reason(e)),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "endpoint worker error: {e}"
+            ))),
+        }
+    }
+
+    async fn clear_halt(&self) -> Result<()> {
+        let (response, receiver) = oneshot::channel();
+        self.sender
+            .send(EndpointCommand::ClearHalt { response })
+            .map_err(|_| napi::Error::from_reason("endpoint worker stopped"))?;
+
+        match receiver.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(napi::Error::from_reason(e)),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "endpoint worker error: {e}"
+            ))),
+        }
+    }
+
+    fn stop(&self) {
+        let _ = self.sender.send(EndpointCommand::Stop);
+        if let Some(join_handle) = self
+            .join_handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            let _ = join_handle.join();
+        }
+    }
+}
+
+fn handle_endpoint_command<DIR: nusb::transfer::EndpointDirection>(
+    command: EndpointCommand,
+    endpoint: &mut AnyEndpoint<DIR>,
+    pending: &mut VecDeque<PendingTransfer>,
+    clear_halt_responses: &mut Vec<ClearHaltResponse>,
+    stopping: &mut bool,
+) {
+    match command {
+        EndpointCommand::Transfer {
+            buffer,
+            timeout,
+            response,
+        } => {
+            if *stopping {
+                let _ = response.send(Err("endpoint worker stopped".to_string()));
+                return;
+            }
+
+            endpoint.submit(buffer);
+            pending.push_back(PendingTransfer {
+                deadline: transfer_deadline(timeout),
+                response: Some(response),
+            });
+        }
+        EndpointCommand::ClearHalt { response } => {
+            endpoint.cancel_all();
+            cancel_pending_transfers(pending);
+            clear_halt_responses.push(response);
+        }
+        EndpointCommand::Stop => {
+            *stopping = true;
+            endpoint.cancel_all();
+            cancel_pending_transfers(pending);
+            for response in clear_halt_responses.drain(..) {
+                let _ = response.send(Err("endpoint worker stopped".to_string()));
+            }
+        }
+    }
+}
+
+fn cancel_pending_transfers(pending: &mut VecDeque<PendingTransfer>) {
+    for pending_transfer in pending {
+        if let Some(response) = pending_transfer.response.take() {
+            let _ = response.send(Err(format!(
+                "{:?}",
+                nusb::transfer::TransferError::Cancelled
+            )));
+        }
+    }
+}
+
+fn expire_timed_out_transfers(pending: &mut VecDeque<PendingTransfer>) {
+    let now = Instant::now();
+    for pending_transfer in pending {
+        if pending_transfer
+            .deadline
+            .is_some_and(|deadline| deadline <= now)
+        {
+            if let Some(response) = pending_transfer.response.take() {
+                let _ = response.send(Err(format!(
+                    "{:?}",
+                    nusb::transfer::TransferError::Cancelled
+                )));
+            }
+        }
+    }
+}
+
+fn next_wait(pending: &VecDeque<PendingTransfer>) -> Duration {
+    const ENDPOINT_POLL_TIMEOUT: Duration = Duration::from_millis(10);
+
+    pending
+        .iter()
+        .filter(|pending_transfer| pending_transfer.response.is_some())
+        .filter_map(|pending_transfer| pending_transfer.deadline)
+        .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+        .min()
+        .map(|timeout| timeout.min(ENDPOINT_POLL_TIMEOUT))
+        .unwrap_or(ENDPOINT_POLL_TIMEOUT)
+}
+
+fn transfer_deadline(timeout: Duration) -> Option<Instant> {
+    if timeout.is_zero() {
+        None
+    } else {
+        Some(Instant::now() + timeout)
+    }
+}
+
+#[napi(object)]
+pub struct UsbEndpoint {
+    #[napi(writable = false)]
+    pub endpointNumber: u8,
+    #[napi(writable = false, ts_type = "USBDirection")]
+    pub direction: String,
+    #[napi(writable = false, ts_type = "USBEndpointType", js_name = "type")]
+    pub _type: String,
+    #[napi(writable = false)]
+    pub packetSize: u32,
+}
+
+impl UsbEndpoint {
+    pub fn new(endpoint: nusb::descriptors::EndpointDescriptor) -> Self {
+        Self {
+            endpointNumber: endpoint.address() & ENDPOINT_NUMBER_MASK,
+            direction: if endpoint.direction() == nusb::transfer::Direction::In {
+                "in".to_string()
+            } else {
+                "out".to_string()
+            },
+            _type: match endpoint.transfer_type() {
+                nusb::descriptors::TransferType::Control => "control".to_string(),
+                nusb::descriptors::TransferType::Isochronous => "isochronous".to_string(),
+                nusb::descriptors::TransferType::Bulk => "bulk".to_string(),
+                nusb::descriptors::TransferType::Interrupt => "interrupt".to_string(),
+            },
+            packetSize: endpoint.max_packet_size() as u32,
+        }
+    }
+}
+
+#[napi(object)]
+pub struct UsbAlternateInterface {
+    #[napi(writable = false)]
+    pub alternateSetting: u8,
+    #[napi(writable = false)]
+    pub interfaceClass: u8,
+    #[napi(writable = false)]
+    pub interfaceSubclass: u8,
+    #[napi(writable = false)]
+    pub interfaceProtocol: u8,
+    #[napi(writable = false)]
+    pub interfaceName: Option<String>,
+    #[napi(writable = false)]
+    pub endpoints: Vec<UsbEndpoint>,
+}
+
+impl UsbAlternateInterface {
+    pub fn new(
+        device: &nusb::Device,
+        iface: nusb::descriptors::InterfaceDescriptor,
+    ) -> Result<Self> {
+        Ok(Self {
+            alternateSetting: iface.alternate_setting(),
+            interfaceClass: iface.class(),
+            interfaceSubclass: iface.subclass(),
+            interfaceProtocol: iface.protocol(),
+            interfaceName: get_string(device, iface.string_index())?,
+            endpoints: iface
+                .endpoints()
+                .map(|endpoint| UsbEndpoint::new(endpoint))
+                .collect(),
+        })
+    }
+}
+
+#[napi(object)]
+pub struct UsbInterface {
+    #[napi(writable = false)]
+    pub interfaceNumber: u8,
+    #[napi(writable = false)]
+    pub claimed: bool,
+    #[napi(writable = false)]
+    pub alternate: UsbAlternateInterface,
+    #[napi(writable = false)]
+    pub alternates: Vec<UsbAlternateInterface>,
+}
+
+impl UsbInterface {
+    pub fn new(
+        usb_device: &UsbDevice,
+        device: &nusb::Device,
+        iface: nusb::descriptors::InterfaceDescriptors,
+    ) -> Result<Self> {
+        Ok(Self {
+            interfaceNumber: iface.interface_number(),
+            claimed: usb_device.interfaces_guard()[iface.interface_number() as usize].is_some(),
+            alternate: UsbAlternateInterface::new(&device, iface.first_alt_setting())?,
+            alternates: iface
+                .alt_settings()
+                .map(|iface| UsbAlternateInterface::new(&device, iface))
+                .collect::<Result<Vec<_>>>()?,
+        })
+    }
+}
+
+#[napi(object)]
+pub struct UsbConfiguration {
+    #[napi(writable = false)]
+    pub configurationValue: u8,
+    #[napi(writable = false)]
+    pub configurationName: Option<String>,
+    #[napi(writable = false)]
+    pub interfaces: Vec<UsbInterface>,
+}
+
+impl UsbConfiguration {
+    pub fn new(
+        usb_device: &UsbDevice,
+        device: &nusb::Device,
+        config: nusb::descriptors::ConfigurationDescriptor,
+    ) -> Result<Self> {
+        let interfaces = config
+            .interfaces()
+            .map(|iface| UsbInterface::new(&usb_device, &device, iface))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            configurationValue: config.configuration_value(),
+            configurationName: get_string(device, config.string_index())?,
+            interfaces,
+        })
+    }
+}
+
+#[napi(object, js_name = "USBControlTransferParameters")]
+pub struct UsbControlTransferParameters {
+    #[napi(ts_type = "USBRequestType")]
+    pub requestType: String,
+    #[napi(ts_type = "USBRecipient")]
+    pub recipient: String,
+    pub request: u8,
+    pub value: u16,
+    pub index: u16,
+}
+
+#[napi]
+pub struct UsbDevice {
+    device_info: nusb::DeviceInfo,
+    device: Mutex<Option<nusb::Device>>,
+    interfaces: Mutex<Vec<Option<nusb::Interface>>>,
+    in_endpoints: SharedEndpointCache<EndpointWorker<nusb::transfer::In>>,
+    out_endpoints: SharedEndpointCache<EndpointWorker<nusb::transfer::Out>>,
+
+    #[napi(writable = false)]
+    pub vendorId: u16,
+    #[napi(writable = false)]
+    pub productId: u16,
+    #[napi(writable = false)]
+    pub deviceVersionMajor: u8,
+    #[napi(writable = false)]
+    pub deviceVersionMinor: u8,
+    #[napi(writable = false)]
+    pub deviceVersionSubminor: u8,
+    #[napi(writable = false)]
+    pub usbVersionMajor: u8,
+    #[napi(writable = false)]
+    pub usbVersionMinor: u8,
+    #[napi(writable = false)]
+    pub usbVersionSubminor: u8,
+    #[napi(writable = false)]
+    pub deviceClass: u8,
+    #[napi(writable = false)]
+    pub deviceSubclass: u8,
+    #[napi(writable = false)]
+    pub deviceProtocol: u8,
+
+    // Non WebUSB props
+    #[napi(writable = false)]
+    pub bus: String,
+    #[napi(writable = false)]
+    pub address: u8,
+    #[napi(writable = false)]
+    pub ports: Vec<u8>,
+    #[napi(writable = false, ts_type = "USBSpeed")]
+    pub speed: Option<String>,
+}
+
+#[napi]
+impl UsbDevice {
+    fn device_guard(&self) -> MutexGuard<'_, Option<nusb::Device>> {
+        self.device
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn interfaces_guard(&self) -> MutexGuard<'_, Vec<Option<nusb::Interface>>> {
+        self.interfaces
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn new(device_info: nusb::DeviceInfo) -> Self {
+        let (deviceVersionMajor, deviceVersionMinor, deviceVersionSubminor) =
+            decode_version(device_info.device_version());
+        let (usbVersionMajor, usbVersionMinor, usbVersionSubminor) =
+            decode_version(device_info.usb_version());
+
+        Self {
+            device_info: device_info.clone(),
+            device: Mutex::new(None),
+            interfaces: Mutex::new(vec![None; 256]),
+            in_endpoints: SharedEndpointCache::new(),
+            out_endpoints: SharedEndpointCache::new(),
+            vendorId: device_info.vendor_id(),
+            productId: device_info.product_id(),
+            deviceVersionMajor,
+            deviceVersionMinor,
+            deviceVersionSubminor,
+            usbVersionMajor,
+            usbVersionMinor,
+            usbVersionSubminor,
+            deviceClass: device_info.class(),
+            deviceSubclass: device_info.subclass(),
+            deviceProtocol: device_info.protocol(),
+            bus: device_info.bus_id().to_string(),
+            address: device_info.device_address(),
+            ports: device_info.port_chain().to_vec(),
+            speed: match device_info.speed() {
+                Some(speed) => match speed {
+                    nusb::Speed::Low => Some("low".to_string()),
+                    nusb::Speed::Full => Some("full".to_string()),
+                    nusb::Speed::High => Some("high".to_string()),
+                    nusb::Speed::Super => Some("super".to_string()),
+                    nusb::Speed::SuperPlus => Some("superPlus".to_string()),
+                    _ => None,
+                },
+                None => None,
+            },
+        }
+    }
+
+    #[napi(getter)]
+    pub fn handle(&self) -> String {
+        format!("{:?}", self.device_info.id())
+    }
+
+    #[napi(getter)]
+    pub unsafe fn manufacturerName(&mut self) -> Result<Option<String>> {
+        self.device_info
+            .get_manufacturer_string()
+            .wait()
+            .map_err(|e| napi::Error::from_reason(format!("getString error: {e}")))
+    }
+
+    #[napi(getter)]
+    pub unsafe fn productName(&mut self) -> Result<Option<String>> {
+        self.device_info
+            .get_product_string()
+            .wait()
+            .map_err(|e| napi::Error::from_reason(format!("getString error: {e}")))
+    }
+
+    #[napi(getter)]
+    pub unsafe fn serialNumber(&mut self) -> Result<Option<String>> {
+        self.device_info
+            .get_serial_number_string()
+            .wait()
+            .map_err(|e| napi::Error::from_reason(format!("getString error: {e}")))
+    }
+
+    #[napi(getter)]
+    pub fn opened(&self) -> bool {
+        self.device_guard().is_some()
+    }
+
+    #[napi(getter, ts_return_type = "USBConfiguration")]
+    pub unsafe fn configuration(&mut self) -> Result<Option<UsbConfiguration>> {
+        let device = match self.device_guard().as_ref() {
+            Some(device) => device.clone(),
+            None => self._open()?,
+        };
+
+        let config = device
+            .active_configuration()
+            .map_err(|e| napi::Error::from_reason(format!("configuration error: {e}")))?;
+
+        Ok(Some(UsbConfiguration::new(&self, &device, config)?))
+    }
+
+    #[napi(getter, ts_return_type = "Array<USBConfiguration>")]
+    pub unsafe fn configurations(&mut self) -> Result<Vec<UsbConfiguration>> {
+        let device = match self.device_guard().as_ref() {
+            Some(device) => device.clone(),
+            None => self._open()?,
+        };
+
+        device
+            .configurations()
+            .map(|config| UsbConfiguration::new(&self, &device, config))
+            .collect::<Result<Vec<_>>>()
+    }
+
+    unsafe fn _open(&self) -> Result<nusb::Device> {
+        self.device_info
+            .open()
+            .wait()
+            .map_err(|e| napi::Error::from_reason(format!("open error: {e}")))
+    }
+
+    #[napi]
+    pub async unsafe fn open(&mut self) -> Result<()> {
+        self.clear_endpoint_caches();
+        let device_info = self.device_info.clone();
+        let device = run_blocking(move || {
+            device_info
+                .open()
+                .wait()
+                .map_err(|e| format!("open error: {e}"))
+        })
+        .await?;
+        *self.device_guard() = Some(device);
+        Ok(())
+    }
+
+    #[napi]
+    pub async unsafe fn close(&self) -> Result<()> {
+        self.clear_endpoint_caches();
+        self.interfaces_guard().fill(None);
+        *self.device_guard() = None;
+        Ok(())
+    }
+
+    #[napi]
+    pub async unsafe fn forget(&self) -> Result<()> {
+        self.close().await
+    }
+
+    #[napi]
+    pub async fn reset(&self) -> Result<()> {
+        let device = self.device_guard().clone();
+        match device {
+            Some(device) => {
+                self.clear_endpoint_caches();
+                run_blocking(move || {
+                    device
+                        .reset()
+                        .wait()
+                        .map_err(|e| format!("reset error: {e}"))
+                })
+                .await?;
+                self.clear_endpoint_caches();
+                Ok(())
+            }
+            None => Err(napi::Error::from_reason("reset error: invalid state")),
+        }
+    }
+
+    #[napi]
+    pub async fn selectConfiguration(&self, configurationValue: u8) -> Result<()> {
+        let device = self.device_guard().clone();
+        match device {
+            Some(device) => {
+                let found = device
+                    .configurations()
+                    .any(|c| c.configuration_value() == configurationValue);
+                if !found {
+                    return Err(napi::Error::from_reason(
+                        "selectConfiguration error: invalid configuration",
+                    ));
+                }
+
+                #[cfg(windows)]
+                {
+                    // Unsupported, as per WebUSB spec on Windows
+                    Ok(())
+                }
+                #[cfg(not(windows))]
+                {
+                    self.clear_endpoint_caches();
+                    run_blocking(move || {
+                        device
+                            .set_configuration(configurationValue)
+                            .wait()
+                            .map_err(|e| format!("selectConfiguration error: {e}"))
+                    })
+                    .await?;
+                    self.clear_endpoint_caches();
+                    Ok(())
+                }
+            }
+            None => Err(napi::Error::from_reason(
+                "selectConfiguration error: invalid state",
+            )),
+        }
+    }
+
+    #[napi]
+    pub async unsafe fn claimInterface(&mut self, interfaceNumber: u8) -> Result<()> {
+        let device = self.device_guard().clone();
+        match device {
+            Some(device) => {
+                let interface = run_blocking(move || {
+                    device
+                        .claim_interface(interfaceNumber)
+                        .wait()
+                        .map_err(|e| format!("claimInterface error: {e}"))
+                })
+                .await?;
+                self.interfaces_guard()[interfaceNumber as usize] = Some(interface);
+                Ok(())
+            }
+            None => Err(napi::Error::from_reason(
+                "claimInterface error: invalid state",
+            )),
+        }
+    }
+
+    #[napi]
+    pub async unsafe fn releaseInterface(&self, interfaceNumber: u8) -> Result<()> {
+        if self.device_guard().is_none() {
+            return Err(napi::Error::from_reason(
+                "releaseInterface error: invalid state",
+            ));
+        }
+
+        if self.interfaces_guard()[interfaceNumber as usize].is_none() {
+            return Err(napi::Error::from_reason(
+                "releaseInterface error: not claimed",
+            ));
+        }
+
+        self.clear_endpoint_caches();
+        self.interfaces_guard()[interfaceNumber as usize] = None;
+        Ok(())
+    }
+
+    #[napi]
+    pub async unsafe fn selectAlternateInterface(
+        &mut self,
+        interfaceNumber: u8,
+        alternateSetting: u8,
+    ) -> Result<()> {
+        let interface = self.interfaces_guard()[interfaceNumber as usize].clone();
+        match interface {
+            Some(interface) => {
+                self.clear_endpoint_caches();
+                run_blocking(move || {
+                    interface
+                        .set_alt_setting(alternateSetting)
+                        .wait()
+                        .map_err(|e| format!("selectAlternateInterface error: {e}"))
+                })
+                .await?;
+                Ok(())
+            }
+            None => Err(napi::Error::from_reason(
+                "selectAlternateInterface error: invalid state",
+            )),
+        }
+    }
+
+    #[napi(js_name = "nativeControlTransferIn")]
+    pub async fn controlTransferIn(
+        &self,
+        setup: UsbControlTransferParameters,
+        timeout: u32,
+        length: u16,
+    ) -> Result<Option<Uint8Array>> {
+        let control_type = control_type_from_request_type(&setup.requestType);
+        let recipient = recipient_from_request_recipient(&setup.recipient);
+
+        #[cfg(not(windows))]
+        if recipient == nusb::transfer::Recipient::Device {
+            let device = self.device_guard().as_ref().cloned().ok_or_else(|| {
+                napi::Error::from_reason(format!("controlTransferIn error: invalid state"))
+            })?;
+            let request = control_in_setup(&setup, control_type, recipient, setup.index, length);
+            let result = run_blocking(move || {
+                device
+                    .control_in(request, Duration::from_millis(timeout as u64))
+                    .wait()
+                    .map_err(|e| format!("controlTransferIn error: {e}"))
+            })
+            .await?;
+            return Ok(Some(Uint8Array::from(result)));
+        }
+
+        let interface = self.get_interface(recipient, setup.index).ok_or_else(|| {
+            napi::Error::from_reason(format!("controlTransferIn error: invalid state"))
+        })?;
+        let request = control_in_setup(&setup, control_type, recipient, setup.index, length);
+        let result = run_blocking(move || {
+            interface
+                .control_in(request, Duration::from_millis(timeout as u64))
+                .wait()
+                .map_err(|e| format!("controlTransferIn error: {e}"))
+        })
+        .await?;
+        Ok(Some(Uint8Array::from(result)))
+    }
+
+    #[napi(js_name = "nativeControlTransferOut")]
+    pub async fn controlTransferOut(
+        &self,
+        setup: UsbControlTransferParameters,
+        timeout: u32,
+        data: Option<Uint8Array>,
+    ) -> Result<u32> {
+        let control_type = control_type_from_request_type(&setup.requestType);
+        let recipient = recipient_from_request_recipient(&setup.recipient);
+        let bytes = data.map(|b| b.to_vec()).unwrap_or_default();
+        let bytes_len = bytes.len();
+
+        #[cfg(not(windows))]
+        if recipient == nusb::transfer::Recipient::Device {
+            let device = self.device_guard().as_ref().cloned().ok_or_else(|| {
+                napi::Error::from_reason(format!("controlTransferOut error: invalid state"))
+            })?;
+            run_blocking(move || {
+                let request =
+                    control_out_setup(&setup, control_type, recipient, setup.index, &bytes);
+                device
+                    .control_out(request, Duration::from_millis(timeout as u64))
+                    .wait()
+                    .map_err(|e| format!("controlTransferOut error: {e}"))
+            })
+            .await?;
+            return Ok(bytes_len as u32);
+        }
+
+        let interface = self.get_interface(recipient, setup.index).ok_or_else(|| {
+            napi::Error::from_reason(format!("controlTransferOut error: invalid state"))
+        })?;
+        run_blocking(move || {
+            let request = control_out_setup(&setup, control_type, recipient, setup.index, &bytes);
+            interface
+                .control_out(request, Duration::from_millis(timeout as u64))
+                .wait()
+                .map_err(|e| format!("controlTransferOut error: {e}"))
+        })
+        .await?;
+        Ok(bytes_len as u32)
+    }
+
+    #[napi(js_name = "nativeTransferIn")]
+    pub async fn transferIn(
+        &self,
+        endpointNumber: u8,
+        timeout: u32,
+        length: u32,
+    ) -> Result<Option<Uint8Array>> {
+        match self.get_in_endpoint(endpointNumber) {
+            Some(worker) => {
+                let packet_size = worker.max_packet_size;
+                let req = (((length as usize) + packet_size - 1) / packet_size) * packet_size;
+                let completion = worker
+                    .transfer(Buffer::new(req), Duration::from_millis(timeout as u64))
+                    .await?;
+                completion
+                    .status
+                    .map_err(|e| napi::Error::from_reason(format!("transferIn error: {e:?}")))?;
+                let mut v = completion.buffer.into_vec();
+                v.truncate(completion.actual_len.min(length as usize));
+                Ok(Some(Uint8Array::from(v)))
+            }
+            None => {
+                return Err(napi::Error::from_reason(
+                    "transferIn error: endpoint not found",
+                ));
+            }
+        }
+    }
+
+    #[napi(js_name = "nativeTransferOut")]
+    pub async fn transferOut(
+        &self,
+        endpointNumber: u8,
+        timeout: u32,
+        data: Uint8Array,
+    ) -> Result<u32> {
+        match self.get_out_endpoint(endpointNumber) {
+            Some(worker) => {
+                let data = data.to_vec();
+                let mut buf = Buffer::new(data.len());
+                buf.extend_from_slice(&data);
+                let completion = worker
+                    .transfer(buf, Duration::from_millis(timeout as u64))
+                    .await?;
+                completion
+                    .status
+                    .map_err(|e| napi::Error::from_reason(format!("transferOut error: {e:?}")))?;
+                Ok(completion.actual_len as u32)
+            }
+            None => {
+                return Err(napi::Error::from_reason(
+                    "transferOut error: endpoint not found",
+                ));
+            }
+        }
+    }
+
+    #[napi(
+        js_name = "nativeIsochronousTransferIn",
+        ts_return_type = "Promise<USBIsochronousInTransferResult>"
+    )]
+    pub async fn isochronousTransferIn(
+        &self,
+        _endpointNumber: u8,
+        _packetLengths: Vec<u32>,
+        _timeout: u32,
+    ) -> Result<()> {
+        Err(napi::Error::from_reason(
+            "isochronousTransferIn error: method not implemented",
+        ))
+    }
+
+    #[napi(
+        js_name = "nativeIsochronousTransferOut",
+        ts_return_type = "Promise<USBIsochronousOutTransferResult>"
+    )]
+    pub async fn isochronousTransferOut(
+        &self,
+        _endpointNumber: u8,
+        _data: Uint8Array,
+        _packetLengths: Vec<u32>,
+        _timeout: u32,
+    ) -> Result<()> {
+        Err(napi::Error::from_reason(
+            "isochronousTransferOut error: method not implemented",
+        ))
+    }
+
+    #[napi]
+    pub async fn clearHalt(
+        &self,
+        #[napi(ts_arg_type = "USBDirection")] direction: String,
+        endpointNumber: u8,
+    ) -> Result<()> {
+        if direction == "in" {
+            match self.get_in_endpoint(endpointNumber) {
+                Some(worker) => {
+                    worker
+                        .clear_halt()
+                        .await
+                        .map_err(|e| napi::Error::from_reason(format!("clearHalt error: {e}")))?;
+                }
+                None => {
+                    return Err(napi::Error::from_reason(
+                        "clearHalt error: endpoint not found",
+                    ));
+                }
+            }
+        } else {
+            match self.get_out_endpoint(endpointNumber) {
+                Some(worker) => {
+                    worker
+                        .clear_halt()
+                        .await
+                        .map_err(|e| napi::Error::from_reason(format!("clearHalt error: {e}")))?;
+                }
+                None => {
+                    return Err(napi::Error::from_reason(
+                        "clearHalt error: endpoint not found",
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn clear_endpoint_caches(&self) {
+        self.in_endpoints.clear();
+        self.out_endpoints.clear();
+    }
+
+    #[napi]
+    pub async fn detachKernelDriver(&self, interfaceNumber: u8) -> Result<()> {
+        let device = self.device_guard().clone();
+        match device {
+            Some(device) => {
+                run_blocking(move || {
+                    device
+                        .detach_kernel_driver(interfaceNumber)
+                        .map_err(|e| format!("detachKernelDriver error: {e}"))
+                })
+                .await
+            }
+            None => Err(napi::Error::from_reason(
+                "detachKernelDriver error: invalid state",
+            )),
+        }
+    }
+
+    #[napi]
+    pub async fn attachKernelDriver(&self, interfaceNumber: u8) -> Result<()> {
+        let device = self.device_guard().clone();
+        match device {
+            Some(device) => {
+                run_blocking(move || {
+                    device
+                        .attach_kernel_driver(interfaceNumber)
+                        .map_err(|e| format!("attachKernelDriver error: {e}"))
+                })
+                .await
+            }
+            None => Err(napi::Error::from_reason(
+                "attachKernelDriver error: invalid state",
+            )),
+        }
+    }
+
+    fn get_interface(
+        &self,
+        recipient: nusb::transfer::Recipient,
+        index: u16,
+    ) -> Option<nusb::Interface> {
+        if recipient == nusb::transfer::Recipient::Interface {
+            // If recipient is interface and index matches a claimed interface number use that interface
+            if let Some(interface) = self
+                .interfaces_guard()
+                .get(index as usize)
+                .and_then(|interface| interface.clone())
+            {
+                return Some(interface);
+            }
+        }
+        if recipient == nusb::transfer::Recipient::Endpoint {
+            // If recipient is endpoint and index matches an endpoint address use the interface that owns that endpoint
+            for maybe_iface in self.interfaces_guard().iter() {
+                let iface = match maybe_iface {
+                    Some(i) => i,
+                    None => continue,
+                };
+
+                let Some(descriptor) = iface.descriptor() else {
+                    continue;
+                };
+
+                for endpoint in descriptor.endpoints() {
+                    if endpoint.address() == index as u8 {
+                        return Some(iface.clone());
+                    }
+                }
+            }
+        }
+
+        // Return any claimed interface (e.g. for device control transfers on Windows)
+        let maybe_iface = self.interfaces_guard().iter().find_map(|x| x.clone());
+        if maybe_iface.is_some() {
+            return maybe_iface;
+        }
+        None
+    }
+
+    fn get_in_endpoint(&self, endpointNumber: u8) -> Option<EndpointWorker<nusb::transfer::In>> {
+        self.in_endpoints
+            .get_or_try_insert_with(endpointNumber, || self.open_endpoint(endpointNumber))
+    }
+
+    fn get_out_endpoint(&self, endpointNumber: u8) -> Option<EndpointWorker<nusb::transfer::Out>> {
+        self.out_endpoints
+            .get_or_try_insert_with(endpointNumber, || self.open_endpoint(endpointNumber))
+    }
+
+    fn open_endpoint<DIR: nusb::transfer::EndpointDirection>(
+        &self,
+        endpointNumber: u8,
+    ) -> Option<AnyEndpoint<DIR>> {
+        for maybe_iface in self.interfaces_guard().iter() {
+            let iface = match maybe_iface {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let Some(descriptor) = iface.descriptor() else {
+                continue;
+            };
+
+            for ep_desc in descriptor.endpoints() {
+                if ep_desc.direction() == DIR::DIR
+                    && (ep_desc.address() & ENDPOINT_NUMBER_MASK) == endpointNumber
+                {
+                    let addr = ep_desc.address();
+                    return match ep_desc.transfer_type() {
+                        TransferType::Bulk => iface
+                            .endpoint::<Bulk, DIR>(addr)
+                            .ok()
+                            .map(AnyEndpoint::Bulk),
+                        TransferType::Interrupt => iface
+                            .endpoint::<Interrupt, DIR>(addr)
+                            .ok()
+                            .map(AnyEndpoint::Interrupt),
+                        _ => None,
+                    };
+                }
+            }
+        }
+
+        None
+    }
+}
