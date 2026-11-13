@@ -1,84 +1,96 @@
-# Attack Shark X11 Driver
+<p align="center">
+  <img src="assets/shark-x11-electron.png" alt="Attack Shark X11" width="420">
+</p>
 
-Настройка мыши **Attack Shark X11** (и **R1**) с компьютера: DPI, макросы, подсветка, частота опроса, уровень батареи и сброс настроек.
+<h1 align="center">Attack Shark X11 Driver</h1>
 
-Приложение написано на **Electron + Vue 3 + TypeScript**.
+<p align="center">
+  Настройка мыши <b>Attack Shark X11</b> и <b>R1</b> с компьютера:<br>
+  DPI, макросы, подсветка, частота опроса, батарея и сброс.
+</p>
 
-Этот форк ориентирован на **32-битную Windows, включая Windows 7 SP1**, и на сборку через GitHub Actions. Оригинальный проект и reverse-engineering протокола мыши принадлежат авторам из раздела [Благодарности](#благодарности).
+<p align="center">
+  <a href="https://github.com/furkuki-dev/attack-shark-x11-win32/releases"><img src="https://img.shields.io/github/v/release/furkuki-dev/attack-shark-x11-win32?style=for-the-badge&label=версия" alt="Версия"></a>
+  <a href="https://github.com/furkuki-dev/attack-shark-x11-win32/releases"><img src="https://img.shields.io/github/downloads/furkuki-dev/attack-shark-x11-win32/total?style=for-the-badge&label=скачиваний" alt="Скачивания"></a>
+  <a href="https://github.com/furkuki-dev/attack-shark-x11-win32/actions/workflows/project.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkuki-dev/attack-shark-x11-win32/project.yml?style=for-the-badge&label=сборка" alt="Сборка"></a>
+  <img src="https://img.shields.io/badge/Windows-x86%20(ia32)-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x86">
+  <img src="https://img.shields.io/badge/Electron-22-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 22">
+  <img src="https://img.shields.io/badge/лицензия-MIT-green?style=for-the-badge" alt="MIT">
+</p>
 
-> ⚠️ Проект экспериментальный. Прежде чем использовать его на основном компьютере, проверь, что сборка запускается и мышь определяется.
-
----
-
-## Возможности
-
-- **DPI**: настройка ступеней
-- **Макросы**: редактор с задержками
-- **Подсветка**: режим, скорость и цвет
-- **Частота опроса**: от 125 до 1000 Гц
-- **Батарея**: отображение уровня
-- **Сброс** настроек устройства
-- **Автоопределение** мыши при запуске
-- **Темы**: тёмная, светлая и Cappuccino
-- **Языки**: английский и испанский
-- **Сохранение** настроек между запусками
-
-Поддерживаемые модели: **Attack Shark X11** и **R1**. Модель определяется автоматически.
+> ⚠️ **Проект экспериментальный.** Перед использованием на основном компьютере проверь, что сборка запускается и мышь определяется.
 
 ---
 
-## Скачать
+## ✨ Возможности
 
-Готовые сборки лежат на странице [Releases](https://github.com/furkuki-dev/attack-shark-x11-win32/releases):
+<table>
+  <tr>
+    <td width="50%">
+      <h3>🎯 DPI</h3>
+      Настройка ступеней чувствительности.
+    </td>
+    <td width="50%">
+      <h3>🖱️ Макросы</h3>
+      Редактор с задержками между действиями.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>💡 Подсветка</h3>
+      Режим, скорость и цвет.
+    </td>
+    <td>
+      <h3>⚡ Частота опроса</h3>
+      От 125 до 1000 Гц.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>🔋 Батарея</h3>
+      Отображение уровня заряда.
+    </td>
+    <td>
+      <h3>♻️ Сброс</h3>
+      Возврат настроек устройства к заводским.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>🔌 Автоопределение</h3>
+      Мышь находится сама при запуске.
+    </td>
+    <td>
+      <h3>💾 Сохранение</h3>
+      Настройки сохраняются между запусками.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>🌗 Темы</h3>
+      Тёмная, светлая и Cappuccino.
+    </td>
+    <td>
+      <h3>🌍 Языки</h3>
+      English и Español.
+    </td>
+  </tr>
+</table>
 
-| Файл | Описание |
-|---|---|
-| `*-setup.exe` | Установщик: ярлыки в меню «Пуск» и на рабочем столе, автообновление |
-| `*-portable.exe` | Запуск без установки |
-
-В каждом релизе есть контрольные суммы SHA-256. Перед запуском проверь файл.
-
-**Требования:** 32-битная (x86) Windows. Целевая версия: Windows 7 SP1.
+**Поддерживаемые модели:** Attack Shark **X11** и **R1**. Модель определяется автоматически.
 
 ---
 
-## Подключение мыши (Windows)
+## 📥 Скачать
 
-Для связи с мышью нужен драйвер **WinUSB** на интерфейсе управления:
+Готовые сборки на странице [**Releases**](https://github.com/furkuki-dev/attack-shark-x11-win32/releases).
 
-- VID `1D57`, PID `FA55`, `FA60` или `FA61`
-- интерфейс `MI_02`
+| Файл | Что это | Для кого |
+|---|---|---|
+| `*-setup.exe` | Установщик с ярлыками и автообновлением | Обычная установка |
+| `*-portable.exe` | Запуск без установки | Флешка, быстрый тест |
 
-Клавиатурный и мышиный HID-интерфейсы остаются на стандартных драйверах Windows.
+В каждом релизе есть контрольные суммы **SHA-256**. Проверь файл перед запуском:
 
-1. Запусти приложение.
-2. Если мышь не найдена, нажми **Install USB Driver** и подтверди запрос UAC.
-3. Переподключи мышь.
-
-Установка выполняется один раз на компьютер.
-
-В приложении доступны два режима подключения:
-
-- **Wired Mode**: по USB-кабелю
-- **2.4G Adapter**: через беспроводной адаптер
-
----
-
-## Сборка из исходников
-
-**Что понадобится:**
-
-- [Bun](https://bun.sh) 1.3.14
-- Windows 10 или 11 для сборки
-- [Rust](https://rustup.rs) с таргетом `i686-win7-windows-msvc` (нужен для нативного модуля `usb` под Windows 7)
-
-```bash
-git clone https://github.com/furkuki-dev/attack-shark-x11-win32.git
-cd attack-shark-x11-win32
-bun install
-
-bun run dev          # запуск в режиме разработки
-bun run typecheck    # проверка типов
-bun run lint         # ESLint
-bun test             # тесты
-bun run package      # сборка установщика и portable-версии
+```powershell
+Get-FileHash .\attack-shark-x11-electron-1.4.6-ia32-setup.exe -Algorithm SHA256
