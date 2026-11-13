@@ -16,6 +16,8 @@ jobs:
         steps:
             -   name: Checkout repository
                 uses: actions/checkout@v4
+                with:
+                    fetch-depth: 0
 
             -   name: Setup Bun
                 uses: oven-sh/setup-bun@v2
@@ -103,6 +105,83 @@ jobs:
                     if-no-files-found: error
                     retention-days: 14
 
+            # Builds the release description: version, build facts, changes since the
+            # previous tag, and SHA-256 checksums of the real files that were produced.
+            -   name: Generate release notes
+                shell: pwsh
+                env:
+                    REF_TYPE: ${{ github.ref_type }}
+                    REF_NAME: ${{ github.ref_name }}
+                    COMMIT_SHA: ${{ github.sha }}
+                    RUN_NUMBER: ${{ github.run_number }}
+                run: |
+                    $version = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME } else { "ia32-build-$env:RUN_NUMBER" }
+                    $short = $env:COMMIT_SHA.Substring(0, 7)
+
+                    # Commits since the previous tag (tag builds compare against the tag before this one)
+                    if ($env:REF_TYPE -eq 'tag') {
+                        $base = git describe --tags --abbrev=0 HEAD^ 2>$null
+                    } else {
+                        $base = git describe --tags --abbrev=0 2>$null
+                    }
+                    if ($base) {
+                        $log = git log "$base..HEAD" --pretty=format:'%s (%h)'
+                    } else {
+                        $log = git log -n 20 --pretty=format:'%s (%h)'
+                    }
+                    $changes = @()
+                    foreach ($line in $log) { if ($line -and $line.Trim()) { $changes += ('- ' + $line) } }
+                    if ($changes.Count -eq 0) { $changes = @('- Без новых коммитов') }
+
+                    # Checksums of the real build outputs
+                    $rows = @()
+                    foreach ($f in Get-ChildItem dist -Filter '*.exe') {
+                        $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+                        $kind = if ($f.Name -match 'setup') { 'Установщик' } else { 'Portable' }
+                        $rows += ('| ' + $kind + ' | `' + $f.Name + '` | `' + $hash + '` |')
+                    }
+                    if ($rows.Count -eq 0) { throw 'No .exe files in dist/ for the release notes' }
+
+                    $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+                    $electron = $pkg.devDependencies.electron.TrimStart('^')
+                    $usb = $pkg.dependencies.usb
+                    $built = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm') + ' UTC'
+
+                    $md = New-Object System.Collections.Generic.List[string]
+                    $md.Add('## Attack Shark X11 Driver: сборка для 32-битной Windows')
+                    $md.Add('')
+                    $md.Add('Версия для 32-битных систем, включая Windows 7 SP1. Собрана автоматически из коммита `' + $short + '`.')
+                    $md.Add('')
+                    $md.Add('| | |')
+                    $md.Add('|---|---|')
+                    $md.Add('| **Версия** | `' + $version + '` |')
+                    $md.Add('| **Коммит** | `' + $short + '` |')
+                    $md.Add('| **Собрано** | ' + $built + ' |')
+                    $md.Add('| **Архитектура** | x86 (ia32) |')
+                    $md.Add('| **Electron** | ' + $electron + ' |')
+                    $md.Add('| **usb (нативный модуль)** | ' + $usb + ' |')
+                    $md.Add('')
+                    $md.Add('### Что скачать')
+                    $md.Add('- **Установщик** (`*-setup.exe`): установка с ярлыками и автообновлением.')
+                    $md.Add('- **Portable** (`*-portable.exe`): запуск без установки.')
+                    $md.Add('')
+                    $md.Add('### Изменения')
+                    $md.AddRange([string[]]$changes)
+                    $md.Add('')
+                    $md.Add('### Контрольные суммы SHA-256')
+                    $md.Add('| Тип | Файл | SHA-256 |')
+                    $md.Add('|---|---|---|')
+                    $md.AddRange([string[]]$rows)
+                    $md.Add('')
+                    $md.Add('---')
+                    $md.Add('Проверить файл: `Get-FileHash <файл> -Algorithm SHA256` в PowerShell.')
+
+                    [System.IO.File]::WriteAllText(
+                        (Join-Path (Get-Location) 'release-notes.md'),
+                        ($md -join "`n"),
+                        (New-Object System.Text.UTF8Encoding($false)))
+                    Write-Host "Release notes written: $($md.Count) lines"
+
             # Runs only after all previous steps succeeded.
             # Tag builds (v*) publish a normal release marked as "latest".
             # Manual or branch builds publish a prerelease named after the run,
@@ -112,7 +191,7 @@ jobs:
                 with:
                     tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('ia32-build-{0}', github.run_number) }}
                     name: ${{ github.ref_type == 'tag' && github.ref_name || format('ia32 build {0}', github.run_number) }}
-                    body: Automatic ia32 build from commit ${{ github.sha }}.
+                    body_path: release-notes.md
                     files: |
                         dist/*.exe
                         dist/*.blockmap
