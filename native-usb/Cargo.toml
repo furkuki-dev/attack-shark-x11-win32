@@ -1,0 +1,23 @@
+
+[package]
+authors = ["Rob Moran <thegecko@github.com>"]
+edition = "2021"
+name = "usb"
+version = "3.3.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+futures-lite = "2.6.1"
+napi = { version = "3.9.0", features = ["tokio_rt"] }
+napi-derive = "3.5.6"
+nusb = "=0.2.9"
+tokio = { version = "1.52.3", features = ["rt", "time", "fs", "macros", "sync"] }
+
+[build-dependencies]
+napi-build = "2.3.2"
+
+[profile.release]
+lto = true
+strip = "symbols"
