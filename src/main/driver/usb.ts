@@ -4,7 +4,7 @@ import * as HID from 'node-hid';
 interface UsbDevice {
 	vendorId: number;
 	productId: number;
-	serialNumber?: string;
+	serialNumber?: string | undefined;
 	deviceVersionMajor: number;
 	deviceVersionMinor: number;
 	deviceVersionSubminor: number;
@@ -39,7 +39,7 @@ interface HidDeviceInfo {
 	usage?: number;
 	manufacturer?: string;
 	product?: string;
-	serialNumber?: string;
+	serialNumber?: string | undefined;
 }
 
 interface HidDeviceHandle {
@@ -117,7 +117,7 @@ const usbBinding = loadedUsb.usb ?? loadedUsb.default ?? loadedUsb;
 class WindowsHidUsbDevice implements UsbDevice {
 	vendorId: number;
 	productId: number;
-	serialNumber?: string;
+	serialNumber?: string | undefined;
 	deviceVersionMajor = 1;
 	deviceVersionMinor = 0;
 	deviceVersionSubminor = 0;
