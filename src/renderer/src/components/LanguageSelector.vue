@@ -3,7 +3,9 @@ import { ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import BaseSelect from './BaseSelect.vue';
 
-const { locale } = useI18n();
+// Global scope: changing the locale here must update the whole interface,
+// not only this component (the default local scope would change just this one).
+const { locale } = useI18n({ useScope: 'global' });
 const currentLanguage = ref('en');
 
 onMounted(async () => {
