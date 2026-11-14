@@ -305,10 +305,6 @@ export class AttackSharkR1 extends EventEmitter<AttackSharkR1Events> {
 	getBatteryLevel(timeoutMs = 2500): Promise<number> {
 		this.checkIsOpen();
 
-		if (this.connectionMode === ConnectionMode.R1Wired) {
-			return Promise.resolve(-1);
-		}
-
 		if (this.batteryMonitor && !this.batteryMonitor.isPolling) {
 			return Promise.resolve(-1);
 		}
@@ -413,7 +409,7 @@ export class AttackSharkR1 extends EventEmitter<AttackSharkR1Events> {
 		return {
 			manufacturer: 'Beken',
 			product: 'Attack Shark R1',
-			serialNumber: 'N/A',
+			serialNumber: this.device.serialNumber?.trim() || 'N/A',
 			vendorId: `0x${this.device.vendorId.toString(16).padStart(4, '0')}`,
 			productId: `0x${this.device.productId.toString(16).padStart(4, '0')}`,
 			bcdDevice: `${this.device.deviceVersionMajor}.${this.device.deviceVersionMinor}`,

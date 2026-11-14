@@ -56,11 +56,6 @@ export class BatteryMonitor extends EventEmitter<BatteryMonitorEvents> {
 
 	getBatteryLevel(timeoutMs: number): Promise<number> {
 		return new Promise((resolve, reject) => {
-			if (this.connectionMode() === ConnectionMode.Wired) {
-				resolve(-1);
-				return;
-			}
-
 			let finished = false;
 
 			const cleanup = (): void => {
