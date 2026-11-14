@@ -24,7 +24,6 @@ export class BatteryMonitor extends EventEmitter<BatteryMonitorEvents> {
 	private pendingBattery: number = -1;
 	private device: { nativeTransferIn(endpoint: number, timeout: number, length: number): Promise<Uint8Array | null> };
 	private interruptEndpoint: number;
-	private connectionMode: () => ConnectionMode;
 	private logger: Logger;
 	private isOpen: () => boolean;
 	private listenersSetup = false;
@@ -39,7 +38,7 @@ export class BatteryMonitor extends EventEmitter<BatteryMonitorEvents> {
 	constructor(
 		device: { nativeTransferIn(endpoint: number, timeout: number, length: number): Promise<Uint8Array | null> },
 		interruptEndpoint: number,
-		connectionMode: () => ConnectionMode,
+		_connectionMode: () => ConnectionMode,
 		logger: Logger,
 		isOpen: () => boolean,
 		config?: BatteryMonitorConfig,
@@ -47,7 +46,6 @@ export class BatteryMonitor extends EventEmitter<BatteryMonitorEvents> {
 		super();
 		this.device = device;
 		this.interruptEndpoint = interruptEndpoint;
-		this.connectionMode = connectionMode;
 		this.logger = logger;
 		this.isOpen = isOpen;
 		this.headerPrefix = config?.headerPrefix !== undefined ? config.headerPrefix : X11_BATTERY_CONFIG.headerPrefix;

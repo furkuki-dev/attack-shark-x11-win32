@@ -34,6 +34,7 @@ interface USBControlTransferParameters {
 }
 
 interface UsbDeviceLike {
+	serialNumber?: string | undefined;
 	vendorId: number;
 	productId: number;
 	deviceVersionMajor: number;
