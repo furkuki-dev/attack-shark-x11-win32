@@ -379,10 +379,12 @@ app.whenReady().then(() => {
 	ipcMain.handle('detect-device', async () => {
 		try {
 			const { usb } = await import('./driver/usb.js');
+			// Wired PIDs are checked first: a mouse plugged in by cable must win over a 2.4G receiver
+			// that is still connected. 0xfa60 (wireless) is the fallback.
 			const knownPIDs: Array<{ mode: number; model: DeviceModel }> = [
-				{ mode: 0xfa60, model: 'X11' }, // R1, X11SE also use this PID — detected as X11 (same protocol)
 				{ mode: 0xfa55, model: 'X11' },
 				{ mode: 0xfa61, model: 'R1' },
+				{ mode: 0xfa60, model: 'X11' }, // R1, X11SE also use this PID — detected as X11 (same protocol)
 			];
 			for (const { mode, model } of knownPIDs) {
 				const device = await usb.findDeviceByIds(0x1d57, mode);
@@ -404,6 +406,7 @@ app.whenReady().then(() => {
 
 	ipcMain.handle('get-settings', () => settingsManager.getSettings());
 	ipcMain.handle('save-settings', (_, settings) => settingsManager.saveSettings(settings));
+	ipcMain.handle('update-settings', (_, patch) => settingsManager.updateSettings(patch));
 
 	createWindow();
 
