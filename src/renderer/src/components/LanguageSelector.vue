@@ -21,16 +21,17 @@ onMounted(async () => {
 const updateLanguage = async (lang: string) => {
 	currentLanguage.value = lang;
 	locale.value = lang;
-	const settings = await window.api.getSettings();
-	await window.api.saveSettings({ ...settings, language: lang });
+	await window.api.updateSettings({ language: lang });
 };
 </script>
 
 <template>
 	<div class="flex items-center gap-2">
 		<BaseSelect :modelValue="currentLanguage" @update:modelValue="updateLanguage" class="w-full">
-			<option value="en">{{ $t('english') }}</option>
-			<option value="es">{{ $t('spanish') }}</option>
+			<!-- Native names: always readable, whatever the current UI language is -->
+			<option value="en" :selected="currentLanguage === 'en'">English</option>
+			<option value="es" :selected="currentLanguage === 'es'">Español</option>
+			<option value="ru" :selected="currentLanguage === 'ru'">Русский</option>
 		</BaseSelect>
 	</div>
 </template>
