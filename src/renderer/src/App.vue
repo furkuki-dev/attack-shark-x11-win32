@@ -13,6 +13,7 @@ import ToastStack from './components/widgets/ToastStack.vue';
 import StatusMessage from './components/StatusMessage.vue';
 import BaseButton from './components/BaseButton.vue';
 import { useToast } from './composables/useToast';
+import { useDebounce } from './composables/useDebounce';
 import { useI18n } from 'vue-i18n';
 import packageInfo from '../../../package.json';
 
@@ -24,7 +25,7 @@ const capabilities = ref<Record<string, boolean>>({});
 const batteryLevel = ref(-1);
 const sidebarCollapsed = ref(false);
 const { toasts, removeToast } = useToast();
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const preferences = ref({
 	lightMode: 0x20, // Breathing
 	ledSpeed: 2,
@@ -238,21 +239,31 @@ onMounted(async () => {
 	}
 });
 
+// Visited tabs are mounted once, then only shown/hidden (no remount, no device re-read on every switch).
+const visitedTabs = ref<Record<string, boolean>>({});
 watch(
-	() => [activeTab.value, preferences.value, connectionMode.value, deviceModel.value],
-	async () => {
-		const settings = await window.api.getSettings();
-		await window.api.saveSettings({
-			...settings,
-			lastTab: activeTab.value,
-			connectionMode: connectionMode.value,
-			deviceModel: deviceModel.value,
-			theme: localStorage.getItem('theme') || 'dark',
-			preferences: JSON.parse(JSON.stringify(toRaw(preferences.value))),
-		});
+	activeTab,
+	(tab) => {
+		visitedTabs.value[tab] = true;
 	},
-	{ deep: true },
+	{ immediate: true },
 );
+
+// Persist UI state and preferences with a small delay and a partial update in the main process.
+const saveUiState = useDebounce(() => {
+	window.api.updateSettings({
+		lastTab: activeTab.value,
+		connectionMode: connectionMode.value,
+		deviceModel: deviceModel.value,
+	});
+}, 300);
+
+const savePreferences = useDebounce(() => {
+	window.api.updateSettings({ preferences: JSON.parse(JSON.stringify(toRaw(preferences.value))) });
+}, 400);
+
+watch([activeTab, connectionMode, deviceModel], saveUiState);
+watch(preferences, savePreferences, { deep: true });
 </script>
 
 <template>
@@ -261,7 +272,7 @@ watch(
 		<div
 			id="sidebar"
 			:class="[
-				'bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] flex flex-col transition-all duration-300',
+				'bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] flex flex-col transition-[width] duration-200',
 				sidebarCollapsed ? 'w-16' : 'w-64',
 			]"
 		>
@@ -296,7 +307,7 @@ watch(
 				<button
 					@click="sidebarCollapsed = !sidebarCollapsed"
 					class="p-1.5 rounded-lg hover:bg-[var(--sidebar-hover)] text-[var(--sidebar-text)] transition-colors flex-shrink-0"
-					:title="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+					:title="sidebarCollapsed ? $t('sidebar.expand') : $t('sidebar.collapse')"
 				>
 					<Menu class="w-4 h-4" />
 				</button>
@@ -312,10 +323,10 @@ watch(
 							? 'bg-shark-primary/20 text-shark-primary'
 							: 'hover:bg-[var(--sidebar-hover)] text-[var(--sidebar-text)]',
 					]"
-					:title="sidebarCollapsed ? 'Overview' : ''"
+					:title="sidebarCollapsed ? $t('sidebar.overview') : ''"
 				>
 					<LayoutDashboard class="w-5 h-5 flex-shrink-0" />
-					<span v-if="!sidebarCollapsed">Overview</span>
+					<span v-if="!sidebarCollapsed">{{ $t('sidebar.overview') }}</span>
 				</button>
 				<button
 					@click="activeTab = 'preferences'"
@@ -391,6 +402,7 @@ watch(
 					{{ $t('connection.disconnected') }}
 				</div>
 				<div class="text-[10px] text-[var(--sidebar-text-dim)] mt-2">v{{ version }}</div>
+				<div class="text-[10px] text-[var(--sidebar-text-dim)]">{{ $t('credits.author') }}</div>
 			</div>
 		</div>
 
@@ -419,8 +431,8 @@ watch(
 					<button
 						@click="connect(0xfa60)"
 						:disabled="isConnecting"
-						class="bg-[var(--connection-card-bg)] hover:bg-[var(--connection-card-hover)] disabled:opacity-60 disabled:cursor-wait p-5 rounded-xl border border-[var(--connection-card-border)] transition-all group flex flex-col items-center"
-						aria-label="Connect via 2.4GHz wireless adapter"
+						class="bg-[var(--connection-card-bg)] hover:bg-[var(--connection-card-hover)] disabled:opacity-60 disabled:cursor-wait p-5 rounded-xl border border-[var(--connection-card-border)] transition-colors group flex flex-col items-center"
+						:aria-label="$t('connection.adapterAria')"
 					>
 						<Zap
 							class="w-8 h-8 mb-3 text-[var(--connection-card-text)] group-hover:text-shark-primary transition-colors"
@@ -435,8 +447,8 @@ watch(
 					<button
 						@click="connectWired"
 						:disabled="isConnecting"
-						class="bg-[var(--connection-card-bg)] hover:bg-[var(--connection-card-hover)] disabled:opacity-60 disabled:cursor-wait p-5 rounded-xl border border-[var(--connection-card-border)] transition-all group flex flex-col items-center"
-						aria-label="Connect via USB cable"
+						class="bg-[var(--connection-card-bg)] hover:bg-[var(--connection-card-hover)] disabled:opacity-60 disabled:cursor-wait p-5 rounded-xl border border-[var(--connection-card-border)] transition-colors group flex flex-col items-center"
+						:aria-label="$t('connection.wiredAria')"
 					>
 						<ShieldAlert
 							class="w-8 h-8 mb-3 text-[var(--connection-card-text)] group-hover:text-shark-primary transition-colors"
@@ -471,8 +483,8 @@ watch(
 						class="w-full"
 						:disabled="isConnecting"
 						:aria-label="
-							'Retry connection in ' + (connectionMode === 'Wired' ? 'wired' : 'wireless') + ' mode'
-						"
+							$t('connection.retry')
+ "
 					>
 						{{ $t('connection.retry') }}
 					</BaseButton>
@@ -482,88 +494,64 @@ watch(
 				<button
 					@click="window.location.reload()"
 					class="mt-8 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] flex items-center gap-1 transition-colors"
-					aria-label="Force refresh the application"
+					:aria-label="$t('connection.forceRefresh')"
 				>
 					<Info class="w-3 h-3" /> {{ $t('connection.forceRefresh') }}
 				</button>
 			</div>
 
-			<Transition v-else name="fade-slide" mode="out-in">
-				<div :key="activeTab">
-					<!-- Overview / Dashboard -->
-					<div v-if="activeTab === 'overview'" class="space-y-6">
-						<h2 class="text-3xl font-bold flex items-center gap-3 text-[var(--text-primary)]">
-							<LayoutDashboard class="w-8 h-8 text-shark-primary" />
-							{{ $t('overview.title') }}
-						</h2>
-						<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-							<div
-								class="bg-[var(--bg-card)] p-6 rounded-2xl border border-[var(--border-card)] shadow-md transition-all duration-300 hover:shadow-xl"
-							>
-								<h3 class="text-sm text-[var(--text-secondary)] mb-1">{{ $t('overview.battery') }}</h3>
-								<p class="text-2xl font-bold text-[var(--text-primary)]">
-									{{ batteryLevel >= 0 ? `${batteryLevel}%` : $t('overview.batteryUnknown') }}
-								</p>
-							</div>
-							<div
-								class="bg-[var(--bg-card)] p-6 rounded-2xl border border-[var(--border-card)] shadow-md transition-all duration-300 hover:shadow-xl"
-							>
-								<h3 class="text-sm text-[var(--text-secondary)] mb-1">
-									{{ $t('overview.connection') }}
-								</h3>
-								<p class="text-2xl font-bold text-[var(--text-primary)]">
-									{{
-										connectionMode === 'Wired'
-											? $t('connection.wiredDisplay')
-											: $t('overview.wireless')
-									}}
-								</p>
-							</div>
-							<div
-								class="bg-[var(--bg-card)] p-6 rounded-2xl border border-[var(--border-card)] shadow-md transition-all duration-300 hover:shadow-xl"
-							>
-								<h3 class="text-sm text-[var(--text-secondary)] mb-1">{{ $t('overview.ledMode') }}</h3>
-								<p class="text-2xl font-bold text-[var(--text-primary)]">
-									{{ ledModeName }}
-								</p>
-							</div>
-							<div
-								class="bg-[var(--bg-card)] p-6 rounded-2xl border border-[var(--border-card)] shadow-md transition-all duration-300 hover:shadow-xl"
-							>
-								<h3 class="text-sm text-[var(--text-secondary)] mb-1">{{ $t('overview.device') }}</h3>
-								<p class="text-2xl font-bold text-[var(--text-primary)]">
-									Attack Shark {{ deviceModel }}
-								</p>
-							</div>
+			<div v-else class="tab-stage">
+				<!-- Overview is cheap: always rendered, just shown or hidden -->
+				<section v-show="activeTab === 'overview'" class="tab-panel space-y-6">
+					<h2 class="text-3xl font-bold flex items-center gap-3 text-[var(--text-primary)]">
+						<LayoutDashboard class="w-8 h-8 text-shark-primary" />
+						{{ $t('overview.title') }}
+					</h2>
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+						<div class="bg-[var(--bg-card)] p-5 rounded-xl border border-[var(--border-card)]">
+							<h3 class="text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">{{ $t('overview.battery') }}</h3>
+							<p class="text-2xl font-bold text-[var(--text-primary)]">
+								{{ batteryLevel >= 0 ? `${batteryLevel}%` : $t('overview.batteryUnknown') }}
+							</p>
+						</div>
+						<div class="bg-[var(--bg-card)] p-5 rounded-xl border border-[var(--border-card)]">
+							<h3 class="text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">{{ $t('overview.connection') }}</h3>
+							<p class="text-2xl font-bold text-[var(--text-primary)]">
+								{{ connectionMode === 'Wired' ? $t('connection.wiredDisplay') : $t('overview.wireless') }}
+							</p>
+						</div>
+						<div class="bg-[var(--bg-card)] p-5 rounded-xl border border-[var(--border-card)]">
+							<h3 class="text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">{{ $t('overview.ledMode') }}</h3>
+							<p class="text-2xl font-bold text-[var(--text-primary)]">{{ ledModeName }}</p>
+						</div>
+						<div class="bg-[var(--bg-card)] p-5 rounded-xl border border-[var(--border-card)]">
+							<h3 class="text-xs uppercase tracking-wider text-[var(--text-muted)] mb-2">{{ $t('overview.device') }}</h3>
+							<p class="text-2xl font-bold text-[var(--text-primary)]">Attack Shark {{ deviceModel }}</p>
 						</div>
 					</div>
+				</section>
 
-					<!-- Preferences Content -->
-					<div v-if="activeTab === 'preferences'">
-						<UserPreferences
-							v-model="preferences"
-							:isConnected="isConnected"
-							:deviceModel="deviceModel"
-							@reset-complete="isConnected = false"
-						/>
-					</div>
+				<section v-if="visitedTabs.preferences" v-show="activeTab === 'preferences'" class="tab-panel">
+					<UserPreferences
+						v-model="preferences"
+						:isConnected="isConnected"
+						:deviceModel="deviceModel"
+						@reset-complete="isConnected = false"
+					/>
+				</section>
 
-					<!-- DPI Content -->
-					<div v-if="activeTab === 'dpi'">
-						<DpiSettings :isConnected="isConnected" :deviceModel="deviceModel" />
-					</div>
+				<section v-if="visitedTabs.dpi" v-show="activeTab === 'dpi'" class="tab-panel">
+					<DpiSettings :isConnected="isConnected" :deviceModel="deviceModel" />
+				</section>
 
-					<!-- Macros Content -->
-					<div v-if="activeTab === 'macros'">
-						<MacroSettings :isConnected="isConnected" />
-					</div>
+				<section v-if="visitedTabs.macros" v-show="activeTab === 'macros'" class="tab-panel">
+					<MacroSettings :isConnected="isConnected" />
+				</section>
 
-					<!-- Device Info Content -->
-					<div v-if="activeTab === 'device-info'">
-						<DeviceInfo :isConnected="isConnected" />
-					</div>
-				</div>
-			</Transition>
+				<section v-if="visitedTabs['device-info']" v-show="activeTab === 'device-info'" class="tab-panel">
+					<DeviceInfo :isConnected="isConnected" />
+				</section>
+			</div>
 
 			<ToastStack :toasts="toasts" @remove="removeToast" />
 		</main>
