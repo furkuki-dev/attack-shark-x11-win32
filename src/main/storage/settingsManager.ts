@@ -96,3 +96,14 @@ export async function getSettings(): Promise<AppSettings> {
 export async function saveSettings(settings: AppSettings): Promise<void> {
 	await fs.writeFile(getSettingsPath(), JSON.stringify(settings, null, 2));
 }
+
+/** Merges a partial update into the stored settings in one place (one read, one write). */
+export async function updateSettings(patch: Partial<AppSettings>): Promise<void> {
+	const current = await getSettings();
+	await saveSettings({
+		...current,
+		...patch,
+		preferences: { ...current.preferences, ...(patch.preferences ?? {}) },
+		dpiConfig: { ...current.dpiConfig, ...(patch.dpiConfig ?? {}) },
+	});
+}
