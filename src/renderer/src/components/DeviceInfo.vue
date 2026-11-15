@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { HardDrive, Info } from 'lucide-vue-next';
 import BaseButton from './BaseButton.vue';
 import Card from './Card.vue';
 import StatusMessage from './StatusMessage.vue';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const props = defineProps<{
 	isConnected: boolean;
@@ -24,6 +24,12 @@ interface DeviceInfoData {
 }
 
 const deviceInfo = ref<DeviceInfoData | null>(null);
+
+// The firmware returns 'N/A' when the mouse does not expose a serial number.
+const serialDisplay = computed(() => {
+	const sn = deviceInfo.value?.serialNumber;
+	return !sn || sn === 'N/A' ? t('deviceInfo.serialNotReported') : sn;
+});
 const isLoading = ref(false);
 const errorMessage = ref('');
 
@@ -129,7 +135,7 @@ onMounted(() => {
 							{{ $t('deviceInfo.serialNumber') }}
 						</p>
 						<p class="text-lg font-medium text-[var(--text-primary)] font-mono break-all">
-							{{ deviceInfo.serialNumber }}
+							{{ serialDisplay }}
 						</p>
 					</div>
 				</div>

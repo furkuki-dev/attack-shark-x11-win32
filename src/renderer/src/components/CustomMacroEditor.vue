@@ -26,7 +26,7 @@ const emit = defineEmits<{
 	customMacroApplied: [];
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const statusMessage = ref('');
 const isSaving = ref(false);
@@ -196,7 +196,7 @@ const getEventDelayLabel = (event: MacroEvent): string => {
 					<Plus class="w-5 h-5 text-shark-primary" /> {{ $t('macros.events') }}
 					<button
 						@click="addEvent"
-						class="bg-shark-primary hover:bg-shark-primary/80 text-white px-3 py-1 rounded-lg text-sm transition-all flex items-center gap-1"
+						class="bg-shark-primary hover:bg-shark-primary/80 text-white px-3 py-1 rounded-lg text-sm transition-colors flex items-center gap-1"
 					>
 						<Plus class="w-4 h-4" /> {{ $t('macros.addEvent') }}
 					</button>

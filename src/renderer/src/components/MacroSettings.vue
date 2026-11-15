@@ -14,7 +14,7 @@ const props = defineProps<{
 	deviceModel?: 'X11' | 'X11SE' | 'R1';
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const templateOptions = Object.keys(macroTemplates).map((name) => ({
 	label: name.replace(/-/g, ' ').toUpperCase(),
@@ -92,9 +92,9 @@ watch([selectedTemplate, selectedButton], () => debouncedApplyMacro());
 			<button
 				@click="activeTab = 'templates'"
 				:class="[
-					'flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all',
+					'flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors',
 					activeTab === 'templates'
-						? 'bg-shark-primary text-white shadow-sm'
+						? 'bg-shark-primary text-white '
 						: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
 				]"
 			>
@@ -103,9 +103,9 @@ watch([selectedTemplate, selectedButton], () => debouncedApplyMacro());
 			<button
 				@click="activeTab = 'custom'"
 				:class="[
-					'flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all',
+					'flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors',
 					activeTab === 'custom'
-						? 'bg-shark-primary text-white shadow-sm'
+						? 'bg-shark-primary text-white '
 						: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
 				]"
 			>

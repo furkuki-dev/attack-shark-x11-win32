@@ -20,7 +20,7 @@ export interface UserPreferences {
 	rgb: { r: number; g: number; b: number };
 }
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const DEFAULT_PREFS: UserPreferences = {
 	lightMode: 0x20,
@@ -224,7 +224,7 @@ async function applyPreferences(showUi = true) {
 					<span>{{ profile }}</span>
 					<button
 						@click="applyProfile(profile)"
-						class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-lg text-sm transition-all"
+						class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
 					>
 						{{ $t('preferences.applyAction') }}
 					</button>
@@ -270,7 +270,7 @@ async function applyPreferences(showUi = true) {
 
 					<div class="flex items-center gap-4 mb-4">
 						<div
-							class="relative w-10 h-10 rounded-full flex-shrink-0 transition-all duration-500"
+							class="relative w-10 h-10 rounded-full flex-shrink-0 transition-colors duration-500"
 							:style="{
 								backgroundColor: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
 								boxShadow: `0 0 20px rgb(${rgb.r}, ${rgb.g}, ${rgb.b})66, 0 0 40px rgb(${rgb.r}, ${rgb.g}, ${rgb.b})33`,
@@ -278,11 +278,10 @@ async function applyPreferences(showUi = true) {
 						>
 							<div
 								class="absolute inset-1 rounded-full border"
-								:class="
-									rgb.r * 0.299 + rgb.g * 0.587 + rgb.b * 0.114 < 128
+								:class="rgb.r * 0.299 + rgb.g * 0.587 + rgb.b * 0.114 < 128
 										? 'border-white/20'
 										: 'border-black/10'
-								"
+ "
 							/>
 						</div>
 						<input
@@ -296,8 +295,8 @@ async function applyPreferences(showUi = true) {
 									form.rgb.g = parseInt(hex.slice(3, 5), 16);
 									form.rgb.b = parseInt(hex.slice(5, 7), 16);
 								}
-							"
-							class="w-12 h-[46px] bg-[var(--bg-primary)] border border-[var(--border-card)] rounded-lg cursor-pointer p-1 transition-all"
+ "
+							class="w-12 h-[46px] bg-[var(--bg-primary)] border border-[var(--border-card)] rounded-lg cursor-pointer p-1 transition-colors"
 						/>
 					</div>
 					<div class="grid grid-cols-3 gap-2">

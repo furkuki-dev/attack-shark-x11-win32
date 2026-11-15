@@ -9,7 +9,7 @@ import Card from './Card.vue';
 import StatusMessage from './StatusMessage.vue';
 import { useDebounce } from '../composables/useDebounce';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const props = defineProps<{
 	isConnected: boolean;
@@ -50,20 +50,23 @@ onMounted(async () => {
 		];
 	}
 
+	// One write per pause in slider movement, not one per pixel of movement
+	const saveDpiConfig = useDebounce(() => {
+		window.api.updateSettings({
+			dpiConfig: {
+				activeStage: dpiConfig.activeStage,
+				angleSnap: dpiConfig.angleSnap,
+				ripplerControl: dpiConfig.ripplerControl,
+				dpiValues: [...dpiConfig.dpiValues],
+			},
+		});
+	}, 300);
+
 	// Set up watcher after initial load so it doesn't fire on mount
 	watch(
 		dpiConfig,
-		async () => {
-			const s = await window.api.getSettings();
-			await window.api.saveSettings({
-				...s,
-				dpiConfig: {
-					activeStage: dpiConfig.activeStage,
-					angleSnap: dpiConfig.angleSnap,
-					ripplerControl: dpiConfig.ripplerControl,
-					dpiValues: [...dpiConfig.dpiValues],
-				},
-			});
+		() => {
+			saveDpiConfig();
 			if (props.isConnected) {
 				debouncedApplyDpi();
 			}
@@ -167,9 +170,9 @@ const dpiStep = computed(() => (props.deviceModel === 'R1' ? 100 : 50));
 							v-for="i in 6"
 							:key="i"
 							:class="[
-								'py-2 rounded-lg text-sm font-medium transition-all',
+								'py-2 rounded-lg text-sm font-medium transition-colors',
 								dpiConfig.activeStage === i
-									? 'bg-shark-primary text-white shadow-sm font-bold'
+									? 'bg-shark-primary text-white  font-bold'
 									: 'bg-[var(--border-card)]/50 text-[var(--text-primary)] opacity-70 hover:opacity-100',
 							]"
 							@click="dpiConfig.activeStage = i"
@@ -202,9 +205,9 @@ const dpiStep = computed(() => (props.deviceModel === 'R1' ? 100 : 50));
 							>
 								<span
 									:class="[
-										'w-8 h-8 flex items-center justify-center rounded-full text-sm transition-all',
+										'w-8 h-8 flex items-center justify-center rounded-full text-sm transition-colors',
 										dpiConfig.activeStage === i
-											? 'bg-shark-primary text-white shadow-lg shadow-shark-primary/50 font-bold ring-2 ring-shark-primary ring-offset-2 ring-offset-[var(--bg-card)]'
+											? 'bg-shark-primary text-white  shadow-shark-primary/50 font-bold ring-2 ring-shark-primary ring-offset-2 ring-offset-[var(--bg-card)]'
 											: 'bg-[var(--border-card)] text-[var(--text-primary)] opacity-50',
 									]"
 								>
