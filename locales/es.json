@@ -27,7 +27,10 @@
 		"dpi": "Configuración DPI",
 		"macros": "Macros",
 		"deviceInfo": "Info del Dispositivo",
-		"deviceName": "Attack Shark X11"
+		"deviceName": "Attack Shark X11",
+		"overview": "Resumen",
+		"expand": "Expandir panel",
+		"collapse": "Contraer panel"
 	},
 	"connection": {
 		"title": "Conecta tu dispositivo",
@@ -49,7 +52,9 @@
 		"x11": "Attack Shark X11",
 		"r1": "Attack Shark R1",
 		"x11Desc": "PAW3311, 22000 DPI, RGB",
-		"r1Desc": "18000 DPI, ultraligero"
+		"r1Desc": "18000 DPI, ultraligero",
+		"adapterAria": "Conectar mediante adaptador inalámbrico de 2.4 GHz",
+		"wiredAria": "Conectar mediante cable USB"
 	},
 	"preferences": {
 		"title": "Preferencias de Usuario",
@@ -158,7 +163,8 @@
 		"interfaces": "Interfaces",
 		"serialNumber": "Número de Serie",
 		"refreshHint": "Haz clic en \"Actualizar\" para cargar la información del dispositivo",
-		"connectHint": "Conecta un dispositivo para ver información"
+		"connectHint": "Conecta un dispositivo para ver información",
+		"serialNotReported": "El dispositivo no informó el número de serie"
 	},
 	"capabilities": {
 		"notSupported": "Esta función no está disponible en tu dispositivo"
@@ -171,5 +177,14 @@
 		"failed": "Error al restablecer",
 		"dangerZone": "Zona de Peligro",
 		"dangerZoneDesc": "Restablece todas las configuraciones a valores de fábrica. Esta acción no se puede deshacer."
+	},
+	"russian": "Ruso",
+	"credits": {
+		"author": "Rediseño y localización al ruso: furkuki-dev"
+	},
+	"battery": {
+		"wired": "Con cable",
+		"unavailable": "Batería no disponible",
+		"disconnected": "Desconectado"
 	}
 }

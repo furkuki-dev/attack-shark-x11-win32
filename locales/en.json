@@ -27,7 +27,10 @@
 		"dpi": "DPI Config",
 		"macros": "Macros",
 		"deviceInfo": "Device Info",
-		"deviceName": "Attack Shark X11"
+		"deviceName": "Attack Shark X11",
+		"overview": "Overview",
+		"expand": "Expand sidebar",
+		"collapse": "Collapse sidebar"
 	},
 	"connection": {
 		"title": "Connect your device",
@@ -49,7 +52,9 @@
 		"x11": "Attack Shark X11",
 		"r1": "Attack Shark R1",
 		"x11Desc": "PAW3311, 22000 DPI, RGB",
-		"r1Desc": "18000 DPI, lightweight"
+		"r1Desc": "18000 DPI, lightweight",
+		"adapterAria": "Connect via 2.4GHz wireless adapter",
+		"wiredAria": "Connect via USB cable"
 	},
 	"preferences": {
 		"title": "User Preferences",
@@ -158,7 +163,8 @@
 		"interfaces": "Interfaces",
 		"serialNumber": "Serial Number",
 		"refreshHint": "Click \"Refresh\" to load device information",
-		"connectHint": "Connect a device to view information"
+		"connectHint": "Connect a device to view information",
+		"serialNotReported": "The device did not report a serial number"
 	},
 	"capabilities": {
 		"notSupported": "This feature is not available on your device"
@@ -171,5 +177,14 @@
 		"failed": "Reset failed",
 		"dangerZone": "Danger Zone",
 		"dangerZoneDesc": "Reset all settings to factory defaults. This cannot be undone."
+	},
+	"russian": "Russian",
+	"credits": {
+		"author": "Redesign & Russian localization: furkuki-dev"
+	},
+	"battery": {
+		"wired": "Wired",
+		"unavailable": "Battery unavailable",
+		"disconnected": "Disconnected"
 	}
 }
