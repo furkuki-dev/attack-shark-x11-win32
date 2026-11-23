@@ -26,6 +26,8 @@ export interface AppSettings {
 		ripplerControl: boolean;
 		dpiValues: [number, number, number, number, number, number];
 	};
+	/** Macro assigned to each button, keyed by button name (left, right, middle, forward, backward, dpi, ...). */
+	macros: Record<string, readonly [number, number, number]>;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -49,6 +51,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 		ripplerControl: true,
 		dpiValues: [800, 1600, 2400, 3200, 5000, 22000],
 	},
+	macros: {},
 };
 
 function toNum(v: unknown, fallback: number): number {
