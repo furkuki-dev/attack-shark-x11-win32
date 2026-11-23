@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Keyboard } from 'lucide-vue-next';
 import { macroTemplates, MacroName, type MacroTuple } from '../../../shared/macro-templates.js';
-import { useDebounce } from '../composables/useDebounce';
 import BaseSelect from './BaseSelect.vue';
 import Card from './Card.vue';
 import StatusMessage from './StatusMessage.vue';
@@ -70,9 +69,7 @@ const applyMacro = async () => {
 	}
 };
 
-const debouncedApplyMacro = useDebounce(applyMacro, 300);
-
-watch([selectedTemplate, selectedButton], () => debouncedApplyMacro());
+// Nothing is sent to the mouse when the selection changes. Only the apply button sends it.
 </script>
 
 <template>
@@ -141,6 +138,16 @@ watch([selectedTemplate, selectedButton], () => debouncedApplyMacro());
 							</option>
 						</BaseSelect>
 					</div>
+				</div>
+				<div class="mt-6 flex justify-end">
+					<button
+						type="button"
+						class="rounded-lg px-6 py-2 text-sm font-medium bg-[var(--shark-primary)] text-white hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						:disabled="isSaving || !isConnected"
+						@click="applyMacro"
+					>
+						{{ $t('macros.apply') }}
+					</button>
 				</div>
 			</Card>
 		</div>
