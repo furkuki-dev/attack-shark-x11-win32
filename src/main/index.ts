@@ -289,13 +289,25 @@ app.whenReady().then(() => {
 	ipcMain.handle('reset-device', async () => {
 		if (!driver) throw new Error('Device not connected');
 		await driver.reset();
+		await settingsManager.updateSettings({ macros: {} });
 		return { success: true };
 	});
 
-	ipcMain.handle('set-macro', (_, config: MacroBuilderOptions) => {
+	ipcMain.handle('set-macro', async (_, config: MacroBuilderOptions) => {
 		if (!driver) throw new Error('Device not connected');
 		if (deviceModel === 'R1') throw new Error('Macros not supported on R1');
-		return (driver as AttackSharkX11).setMacro(config);
+		// The mouse keeps ONE macro table for all buttons. A write that contains only one button
+		// resets the others to defaults, so the table is merged with everything assigned before.
+		const saved = await settingsManager.getSettings();
+		const table: MacroBuilderOptions = {
+			...(saved.macros as unknown as MacroBuilderOptions),
+			...config,
+		};
+		const result = await (driver as AttackSharkX11).setMacro(table);
+		await settingsManager.updateSettings({
+			macros: table as unknown as Record<string, readonly [number, number, number]>,
+		});
+		return result;
 	});
 
 	ipcMain.handle('set-custom-macro', (_, options: CustomMacroBuilderOptions) => {
